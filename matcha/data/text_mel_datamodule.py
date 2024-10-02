@@ -164,10 +164,10 @@ class TextMelDataset(torch.utils.data.Dataset):
             filepath, text = filepath_and_text[0], filepath_and_text[1]
             spk = None
 
-        text, cleaned_text = self.get_text(text, add_blank=self.add_blank)
+        text, cleaned_text, graphemes = self.get_text(text, add_blank=self.add_blank)
         mel = self.get_mel(filepath)
 
-        return {"x": text, "y": mel, "spk": spk, "filepath": filepath, "x_text": cleaned_text}
+        return {"x": text, "y": mel, "spk": spk, "filepath": filepath, "x_text": cleaned_text, "graphemes": graphemes}
 
     def get_mel(self, filepath):
         audio, sr = ta.load(filepath)
@@ -187,11 +187,11 @@ class TextMelDataset(torch.utils.data.Dataset):
         return mel
 
     def get_text(self, text, add_blank=True):
-        text_norm, cleaned_text = text_to_sequence(text, self.cleaners)
+        text_norm, cleaned_text, graphemes = text_to_sequence(text, self.cleaners, return_original=True)
         if self.add_blank:
             text_norm = intersperse(text_norm, 0)
         text_norm = torch.IntTensor(text_norm)
-        return text_norm, cleaned_text
+        return text_norm, cleaned_text, graphemes
 
     def __getitem__(self, index):
         datapoint = self.get_datapoint(self.filepaths_and_text[index])
@@ -216,7 +216,7 @@ class TextMelBatchCollate:
         x = torch.zeros((B, x_max_length), dtype=torch.long)
         y_lengths, x_lengths = [], []
         spks = []
-        filepaths, x_texts = [], []
+        filepaths, x_texts, graphemes = [], [], []
         for i, item in enumerate(batch):
             y_, x_ = item["y"], item["x"]
             y_lengths.append(y_.shape[-1])
@@ -226,6 +226,7 @@ class TextMelBatchCollate:
             spks.append(item["spk"])
             filepaths.append(item["filepath"])
             x_texts.append(item["x_text"])
+            graphemes.append(item["graphemes"])
 
         y_lengths = torch.tensor(y_lengths, dtype=torch.long)
         x_lengths = torch.tensor(x_lengths, dtype=torch.long)
@@ -239,4 +240,5 @@ class TextMelBatchCollate:
             "spks": spks,
             "filepaths": filepaths,
             "x_texts": x_texts,
+            "graphemes": graphemes,
         }

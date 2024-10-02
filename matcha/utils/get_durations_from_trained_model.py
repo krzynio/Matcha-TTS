@@ -5,6 +5,7 @@ when needed.
 Parameters from hparam.py will be used
 """
 import argparse
+import csv
 import json
 import os
 import sys
@@ -15,7 +16,7 @@ import numpy as np
 import rootutils
 import torch
 from hydra import compose, initialize
-from omegaconf import open_dict
+from omegaconf import OmegaConf, open_dict
 from torch import nn
 from tqdm.auto import tqdm
 
@@ -23,25 +24,37 @@ from matcha.cli import get_device
 from matcha.data.text_mel_datamodule import TextMelDataModule
 from matcha.models.matcha_tts import MatchaTTS
 from matcha.utils.logging_utils import pylogger
-from matcha.utils.utils import get_phoneme_durations
+from matcha.utils.utils import (get_phoneme_durations,
+                                world_level_alignments_from_phoneme_json)
 
 log = pylogger.get_pylogger(__name__)
 
+import logging
+
+import phonemizer
+from phonemizer.separator import Separator
+from unidecode import unidecode
+
 
 def save_durations_to_folder(
-    attn: torch.Tensor, x_length: int, y_length: int, filepath: str, output_folder: Path, text: str
+    attn: torch.Tensor, x_length: int, y_length: int, filepath: str, output_folder: Path, text: str, graphemes: str, cfg: OmegaConf
 ):
     durations = attn.squeeze().sum(1)[:x_length].numpy()
     durations_json = get_phoneme_durations(durations, text)
+    durations_word = world_level_alignments_from_phoneme_json(graphemes, durations_json, cfg["hop_length"], cfg["sample_rate"])
     output = output_folder / Path(filepath).name.replace(".wav", ".npy")
     with open(output.with_suffix(".json"), "w", encoding="utf-8") as f:
         json.dump(durations_json, f, indent=4, ensure_ascii=False)
+    
+    # write a tab separated csv for word level alignments
+    with open(output.with_suffix(".tsv"), "w", encoding="utf-8") as f:
+        csv.writer(f, delimiter="\t", quoting=csv.QUOTE_NONE).writerows(durations_word)
 
     np.save(output, durations)
 
 
 @torch.inference_mode()
-def compute_durations(data_loader: torch.utils.data.DataLoader, model: nn.Module, device: torch.device, output_folder):
+def compute_durations(data_loader: torch.utils.data.DataLoader, model: nn.Module, device: torch.device, output_folder: str, cfg: OmegaConf):
     """Generate durations from the model for each datapoint and save it in a folder
 
     Args:
@@ -50,7 +63,7 @@ def compute_durations(data_loader: torch.utils.data.DataLoader, model: nn.Module
         device (torch.device): GPU or CPU
     """
 
-    for batch in tqdm(data_loader, desc="🍵 Computing durations 🍵:"):
+    for batch in tqdm(data_loader, desc="🍵 Computing durations 🍵"):
         x, x_lengths = batch["x"], batch["x_lengths"]
         y, y_lengths = batch["y"], batch["y_lengths"]
         spks = batch["spks"]
@@ -76,6 +89,8 @@ def compute_durations(data_loader: torch.utils.data.DataLoader, model: nn.Module
                 batch["filepaths"][i],
                 output_folder,
                 batch["x_texts"][i],
+                batch["graphemes"][i],
+                cfg
             )
 
 
@@ -106,6 +121,16 @@ def main():
         required=False,
         help="force overwrite the file",
     )
+    
+    parser.add_argument(
+        "-w",
+        "--word_level",
+        action="store_true",
+        default=False,
+        required=False,
+        help="",
+    )
+
     parser.add_argument(
         "-c",
         "--checkpoint_path",
@@ -162,21 +187,21 @@ def main():
     try:
         print("Computing stats for training set if exists...")
         train_dataloader = text_mel_datamodule.train_dataloader()
-        compute_durations(train_dataloader, model, device, output_folder)
+        compute_durations(train_dataloader, model, device, output_folder, cfg)
     except lightning.fabric.utilities.exceptions.MisconfigurationException:
         print("No training set found")
 
     try:
         print("Computing stats for validation set if exists...")
         val_dataloader = text_mel_datamodule.val_dataloader()
-        compute_durations(val_dataloader, model, device, output_folder)
+        compute_durations(val_dataloader, model, device, output_folder, cfg)
     except lightning.fabric.utilities.exceptions.MisconfigurationException:
         print("No validation set found")
 
     try:
         print("Computing stats for test set if exists...")
         test_dataloader = text_mel_datamodule.test_dataloader()
-        compute_durations(test_dataloader, model, device, output_folder)
+        compute_durations(test_dataloader, model, device, output_folder, cfg)
     except lightning.fabric.utilities.exceptions.MisconfigurationException:
         print("No test set found")
 

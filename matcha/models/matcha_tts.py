@@ -10,12 +10,8 @@ from matcha.models.baselightningmodule import BaseLightningClass
 from matcha.models.components.duration_predictors import DP
 from matcha.models.components.flow_matching import CFM
 from matcha.models.components.text_encoder import TextEncoder
-from matcha.utils.model import (
-    denormalize,
-    fix_len_compatibility,
-    generate_path,
-    sequence_mask,
-)
+from matcha.utils.model import (denormalize, fix_len_compatibility,
+                                generate_path, sequence_mask)
 
 log = utils.get_pylogger(__name__)
 
@@ -73,7 +69,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         self.update_data_statistics(data_statistics)
 
     @torch.inference_mode()
-    def synthesise(self, x, x_lengths, n_timesteps, temperature=1.0, spks=None, length_scale=1.0):
+    def synthesise(self, x, x_lengths, n_timesteps, temperature=1.0, spks=None, length_scale=1.0, dur_n=None):
         """
         Generates mel-spectrogram from text. Returns:
             1. encoder outputs
@@ -118,9 +114,10 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         mu_x, enc_output, x_mask = self.encoder(x, x_lengths, spks)
 
         # Get log-scaled token durations `logw`
-        logw = self.dp(enc_output, x_mask)
+        logw = self.dp(enc_output, x_mask, n_timesteps=dur_n)
 
         w = torch.exp(logw) * x_mask
+        linear_dur = w.clone()
         w_ceil = torch.ceil(w) * length_scale
         # print(w_ceil)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
@@ -151,6 +148,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             "mel": denormalize(decoder_outputs, self.mel_mean, self.mel_std),
             "mel_lengths": y_lengths,
             "rtf": rtf,
+            "linear_dur": linear_dur
         }
 
     def forward(self, x, x_lengths, y, y_lengths, spks=None, out_size=None, cond=None):

@@ -5,7 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import pack
 
-from matcha.models.components.decoder import SinusoidalPosEmb, TimestepEmbedding
+from matcha.models.components.decoder import (SinusoidalPosEmb,
+                                              TimestepEmbedding)
 from matcha.models.components.text_encoder import LayerNorm
 
 # Define available networks
@@ -126,7 +127,7 @@ class FlowMatchingDurationPrediction(nn.Module):
         self.n_steps = params.n_steps
 
     @torch.inference_mode()
-    def forward(self, enc_outputs, mask, n_timesteps=500, temperature=1):
+    def forward(self, enc_outputs, mask, n_timesteps=10, temperature=.667):
         """Forward diffusion
 
         Args:
@@ -146,9 +147,13 @@ class FlowMatchingDurationPrediction(nn.Module):
         """
         if n_timesteps is None:
             n_timesteps = self.n_steps
+            print(f"Using default n_timesteps: {n_timesteps}")
 
         b, _, t = enc_outputs.shape
         z = torch.randn((b, 1, t), device=enc_outputs.device, dtype=enc_outputs.dtype) * temperature
+        if n_timesteps == 0:
+            return z
+
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=enc_outputs.device)
         return self.solve_euler(z, t_span=t_span, enc_outputs=enc_outputs, mask=mask)
 
@@ -441,8 +446,11 @@ class DP(nn.Module):
             raise ValueError(f"Invalid duration predictor configuration: {params.name}")
 
     @torch.inference_mode()
-    def forward(self, enc_outputs, mask):
-        return self.dp(enc_outputs, mask)
+    def forward(self, enc_outputs, mask, n_timesteps=None):
+        if self.name == "flow_matching":
+            return self.dp(enc_outputs, mask, n_timesteps)
+        else:
+            return self.dp(enc_outputs, mask)
 
     def compute_loss(self, durations, enc_outputs, mask):
         return self.dp.compute_loss(durations, enc_outputs, mask)

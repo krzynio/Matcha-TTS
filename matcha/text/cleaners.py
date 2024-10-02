@@ -33,6 +33,13 @@ global_phonemizer = phonemizer.backend.EspeakBackend(
     logger=critical_logger,
 )
 
+alignment_phonemizer = phonemizer.backend.EspeakBackend(
+    language="en-us",
+    preserve_punctuation=True,
+    with_stress=False,
+    language_switch="remove-flags",
+    logger=critical_logger,
+)
 
 # Regular expression matching whitespace:
 _whitespace_re = re.compile(r"\s+")
@@ -103,7 +110,17 @@ def english_cleaners2(text):
     text = expand_abbreviations(text)
     phonemes = global_phonemizer.phonemize([text], strip=True, njobs=1)[0]
     phonemes = collapse_whitespace(phonemes)
-    return phonemes
+    return phonemes, collapse_whitespace(text)
+
+def aligment_english_cleaner2(text):
+    """Pipeline for English text, including abbreviation expansion. + punctuation + stress"""
+    text = convert_to_ascii(text)
+    text = lowercase(text)
+    text = expand_abbreviations(text)
+    phonemes_list = alignment_phonemizer.phonemize(text.split(), strip=True, njobs=1)
+    phonemes = collapse_whitespace(" ".join(phonemes_list))
+    return phonemes, collapse_whitespace(text), phonemes_list
+
 
 
 def english_cleaners_piper(text):

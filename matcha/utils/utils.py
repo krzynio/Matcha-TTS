@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
 import gdown
+import Levenshtein as Lev
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wget
 from omegaconf import DictConfig
 
+from matcha.text.cleaners import (aligment_english_cleaner2,
+                                  alignment_phonemizer, collapse_whitespace)
 from matcha.utils import pylogger, rich_utils
 
 log = pylogger.get_pylogger(__name__)
@@ -257,3 +260,95 @@ def get_phoneme_durations(durations, phones):
         durations
     ), f"{list(duration_json[-1].values())[0]['endtime'],  sum(durations)}"
     return duration_json
+
+
+def seconds_to_minutes(seconds):
+    # return f"{seconds // 60:.2f}:{seconds % 60:.2f}"
+    return f"{seconds:.2f}"
+
+def remove_quotes(s):
+    return s.replace("'", "").replace('"', "")
+
+def exception(stack, current_word):
+    # return False
+    # if stack in ("tə", "tʊ") and current_word == "tuː":
+    #     return True
+    # if stack == "fɚ" and current_word == "fɔːɹ":
+    #     return True
+
+    if len(stack) == len(current_word):
+        # if stack == "ðɪ" and current_word == "ðə":
+        #     return True
+        # if stack == "əv" and current_word == "ʌv":
+        #     return True
+        # if stack == "ɹɔ" and current_word == "ɔn":
+        #     return True
+        # if stack == "ɐnd" and current_word == "ænd":
+        #     return True
+        # if stack == "hɐv" and current_word == "hæv":
+        #     return True
+        # if stack == "ɐl" and current_word == "eɪ":
+        #     return True
+        # if stack == "hɐd" and current_word == "hæd":
+        #     return True
+        # if stack == "ɐs" and current_word == "eɪ":
+        #     return True
+        # if stack == "ɐt" and current_word == "eɪ":
+        #     return True
+        if len(stack) >= 4 and Lev.distance(stack, current_word) <= 3:
+            return True
+
+        raise ValueError(f"Add exception: stack: {stack} , current_word: {current_word}")
+    return False
+
+
+def world_level_alignments_from_phoneme_json(grapheme, phoneme_duration_json, hop_length=256, sample_rate=22050):
+    """Takes the grapheme as input and phoneme duration json and returns the world level alignments
+    # Each frame is 10 * (256 /22050) ms long by default
+    Args:
+        grapheme (str): text in graphemes
+        phoneme_duration_json (str): json with phoeneme level alignments
+    """
+    if len(phoneme_duration_json) < 2:
+        raise ValueError(f"Phoneme duration json is too small to be converted to world level alignments, \
+            this text should not be here {grapheme}")
+
+    current_word_start_time = None
+    # end time of the last phoneme
+    phoneme_duration_json.append({ "E": { "endtime": phoneme_duration_json[-1][list(phoneme_duration_json[-1].keys())[0]]['endtime']}})
+    remove_hyphens = lambda x: x.replace("--", " ").replace("-", "")
+    stress_chars = set(["ˈ","'","ˌ", " "])
+    remove_stress = lambda x: x.replace("ˈ", "").replace("ˌ", "").replace("'", "")
+    
+    grapheme = remove_hyphens(grapheme)
+    _, grapheme, phonetised_grapheme = aligment_english_cleaner2(grapheme) 
+    grapheme = grapheme.split()
+    phonetised_grapheme.append("E")
+    # phonetised_grapheme = collapse_whitespace(" ".join([remove_stress(x) for x in alignment_phonemizer.phonemize(grapheme, strip=True, njobs=1)]) + " E").split()
+    word_counter = 0
+    results = []
+    stack = "" 
+    for obj in phoneme_duration_json:
+        assert len(obj) == 1, f"Invalid structure of phoneme duration json {obj} found"
+        for phone in obj:
+            if phone in stress_chars:
+                continue
+            if phone == "E":
+                break
+            
+            if current_word_start_time is None:
+                current_word_start_time = seconds_to_minutes(obj[phone]["starttime"] * (hop_length / sample_rate))
+                current_word = phonetised_grapheme[word_counter]
+                stack = ""
+            
+            stack += phone
+
+            if stack == current_word or exception(stack, current_word):
+                to_save_word = remove_quotes(grapheme[word_counter])
+                word_counter += 1
+                current_word_end_time = seconds_to_minutes(obj[phone]["endtime"] * (hop_length / sample_rate))
+                results.append([f"{current_word_start_time}", f"{current_word_end_time}", to_save_word])
+                current_word_start_time = None
+                
+    assert len(results) == len(grapheme) == word_counter, f"Results: {results}, grapheme: {grapheme}, phonetised_grapheme: {phonetised_grapheme}" 
+    return results
