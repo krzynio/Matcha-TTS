@@ -16,6 +16,7 @@ import re
 
 import phonemizer
 from unidecode import unidecode
+from matcha.text.symbols import SPECIAL_VOCAL_MAP
 
 # To avoid excessive logging we set the log level of the phonemizer package to Critical
 critical_logger = logging.getLogger("phonemizer")
@@ -84,6 +85,72 @@ def collapse_whitespace(text):
     return re.sub(_whitespace_re, " ", text)
 
 
+def handle_special_vocals(text):
+    """Convert special vocal tokens to non-phonemic placeholders that espeak won't touch."""
+    # Use punctuation-based placeholders that espeak will preserve
+    placeholder_map = {
+        "<UH>": " ~UH~ ",
+        "<UM>": " ~UM~ ", 
+        "<LAUGH>": " ~LAUGH~ ",
+        "<GIGGLE>": " ~GIGGLE~ ",
+        "<CHUCKLE>": " ~CHUCKLE~ ",
+        "<SIGH>": " ~SIGH~ ",
+        "<COUGH>": " ~COUGH~ ",
+        "<SNIFFLE>": " ~SNIFFLE~ ",
+        "<GROAN>": " ~GROAN~ ",
+        "<YAWN>": " ~YAWN~ ",
+        "<GASP>": " ~GASP~ ",
+    }
+    
+    # Replace tokens with punctuation placeholders
+    for original_token, placeholder in placeholder_map.items():
+        text = text.replace(original_token, placeholder)
+    
+    return text
+
+
+def restore_special_symbols_from_placeholders(phonemes):
+    """Restore special symbols from punctuation placeholders after espeak processing."""
+    # Map espeak's phonemization of our placeholders back to special symbols
+    # English espeak converts "~LAUGH~" to "tˈɪldə lˈæf tˈɪldə"  
+    # Polish espeak converts "~LAUGH~" to "tˈɨlda lˈawk tˈɨlda"
+    restoration_map = {
+        # English phoneme patterns
+        "tˈɪldə ˈʌ tˈɪldə": "⟨ᴜʜ⟩",                    # ~UH~ -> tilde uh tilde
+        "tˈɪldə ˈʌm tˈɪldə": "⟨ᴜᴍ⟩",                   # ~UM~ -> tilde um tilde
+        "tˈɪldə lˈæf tˈɪldə": "⟨ʟᴀᴜɢʜ⟩",               # ~LAUGH~ -> tilde laugh tilde
+        "tˈɪldə ɡˈɪɡəl tˈɪldə": "⟨ɢɪɢɢʟᴇ⟩",            # ~GIGGLE~ -> tilde giggle tilde
+        "tˈɪldə tʃˈʌkəl tˈɪldə": "⟨ᴄʜᴜᴄᴋʟᴇ⟩",          # ~CHUCKLE~ -> tilde chuckle tilde
+        "tˈɪldə sˈaɪ tˈɪldə": "⟨ꜱɪɢʜ⟩",                 # ~SIGH~ -> tilde sigh tilde
+        "tˈɪldə kˈɔf tˈɪldə": "⟨ᴄᴏᴜɢʜ⟩",               # ~COUGH~ -> tilde cough tilde
+        "tˈɪldə snˈɪfəl tˈɪldə": "⟨ꜱɴɪꜰꜰʟᴇ⟩",         # ~SNIFFLE~ -> tilde sniffle tilde
+        "tˈɪldə ɡrˈoʊn tˈɪldə": "⟨ɢʀᴏᴀɴ⟩",             # ~GROAN~ -> tilde groan tilde
+        "tˈɪldə jˈɔːn tˈɪldə": "⟨ʏᴀᴡɴ⟩",               # ~YAWN~ -> tilde yawn tilde
+        "tˈɪldə ɡˈæsp tˈɪldə": "⟨ɢᴀꜱᴘ⟩",               # ~GASP~ -> tilde gasp tilde
+        
+        # Polish phoneme patterns (different pronunciation)
+        "tˈɨlda ˈu tˈɨlda": "⟨ᴜʜ⟩",                     # Polish ~UH~
+        "tˈɨlda ˈum tˈɨlda": "⟨ᴜᴍ⟩",                    # Polish ~UM~
+        "tˈɨlda lˈawk tˈɨlda": "⟨ʟᴀᴜɢʜ⟩",               # Polish ~LAUGH~
+        "tˈɨlda ɡˈiɡɛl tˈɨlda": "⟨ɢɪɢɢʟᴇ⟩",            # Polish ~GIGGLE~
+        "tˈɨlda tʃˈakɛl tˈɨlda": "⟨ᴄʜᴜᴄᴋʟᴇ⟩",          # Polish ~CHUCKLE~
+        "tˈɨlda saɪ tˈɨlda": "⟨ꜱɪɢʜ⟩",                 # Polish ~SIGH~
+        "tˈɨlda kof tˈɨlda": "⟨ᴄᴏᴜɢʜ⟩",                # Polish ~COUGH~
+        "tˈɨlda snɨfɛl tˈɨlda": "⟨ꜱɴɪꜰꜰʟᴇ⟩",          # Polish ~SNIFFLE~
+        "tˈɨlda ɡron tˈɨlda": "⟨ɢʀᴏᴀɴ⟩",               # Polish ~GROAN~
+        "tˈɨlda javn tˈɨlda": "⟨ʏᴀᴡɴ⟩",                # Polish ~YAWN~
+        "tˈɨlda ɡasp tˈɨlda": "⟨ɢᴀꜱᴘ⟩",                # Polish ~GASP~
+    }
+    
+    # Replace espeak phonemes with special symbols
+    for espeak_phoneme, symbol in restoration_map.items():
+        phonemes = phonemes.replace(espeak_phoneme, symbol)
+    
+    return phonemes
+
+
+
+
 def convert_to_ascii(text):
     return unidecode(text)
 
@@ -105,6 +172,8 @@ def transliteration_cleaners(text):
 
 def english_cleaners2(text):
     """Pipeline for English text, including abbreviation expansion. + punctuation + stress"""
+    # Handle special vocal tokens BEFORE phonemization (convert to ASCII placeholders)
+    text = handle_special_vocals(text)
     text = convert_to_ascii(text)
     text = lowercase(text)
     text = expand_abbreviations(text)
@@ -112,10 +181,16 @@ def english_cleaners2(text):
     # Added in some cases espeak is not removing brackets
     phonemes = remove_brackets(phonemes)
     phonemes = collapse_whitespace(phonemes)
+    
+    # Restore special symbols from placeholders
+    phonemes = restore_special_symbols_from_placeholders(phonemes)
+    
     return phonemes
 
 
 def polish_cleaners(text):
+    # Handle special vocal tokens BEFORE phonemization (convert to ASCII placeholders)
+    text = handle_special_vocals(text)
     text = lowercase(text)
     if not "polish_cleaners" in global_phonemizers:
         global_phonemizers["polish_cleaners"] = phonemizer.backend.EspeakBackend(
@@ -132,6 +207,10 @@ def polish_cleaners(text):
     # Added in some cases espeak is not removing brackets
     phonemes = remove_brackets(phonemes)
     phonemes = collapse_whitespace(phonemes)
+    
+    # Restore special symbols from placeholders
+    phonemes = restore_special_symbols_from_placeholders(phonemes)
+    
     return phonemes
 
 
