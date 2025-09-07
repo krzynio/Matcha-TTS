@@ -1,6 +1,7 @@
 import datetime as dt
 import math
 import random
+from typing import Any, Dict
 
 import torch
 
@@ -71,6 +72,62 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         )
 
         self.update_data_statistics(data_statistics)
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        super().on_load_checkpoint(checkpoint)
+        
+        # Handle vocabulary expansion for embedding weights
+        state_dict = checkpoint["state_dict"]
+        old_emb_weight = state_dict.get("encoder.emb.weight")
+        
+        if old_emb_weight is not None:
+            old_vocab_size = old_emb_weight.shape[0]
+            new_vocab_size = self.n_vocab
+            
+            if old_vocab_size != new_vocab_size:
+                log.info(f"Expanding vocabulary from {old_vocab_size} to {new_vocab_size}")
+                
+                # Create new embedding weights with proper initialization
+                embedding_dim = old_emb_weight.shape[1]
+                new_emb_weight = torch.zeros(new_vocab_size, embedding_dim)
+                
+                # Copy existing weights
+                new_emb_weight[:old_vocab_size] = old_emb_weight
+                
+                # Initialize new token embeddings with small random values
+                if new_vocab_size > old_vocab_size:
+                    std = old_emb_weight.std().item()
+                    torch.nn.init.normal_(
+                        new_emb_weight[old_vocab_size:], 
+                        mean=0.0, 
+                        std=std
+                    )
+                
+                # Update the state dict
+                state_dict["encoder.emb.weight"] = new_emb_weight
+                
+                # Also handle optimizer states if they exist
+                if "optimizer_states" in checkpoint:
+                    optimizer_states = checkpoint["optimizer_states"]
+                    for opt_state in optimizer_states:
+                        if "state" in opt_state:
+                            for param_id, param_state in opt_state["state"].items():
+                                # Find embedding parameter states and expand them
+                                if isinstance(param_state, dict):
+                                    for state_key, state_tensor in param_state.items():
+                                        if isinstance(state_tensor, torch.Tensor) and len(state_tensor.shape) > 0 and state_tensor.shape[0] == old_vocab_size:
+                                            # Create expanded state tensor
+                                            new_state_tensor = torch.zeros_like(new_emb_weight if state_key in ["exp_avg", "exp_avg_sq"] else state_tensor)
+                                            if len(new_state_tensor.shape) == 1:
+                                                new_state_tensor = torch.zeros(new_vocab_size)
+                                            elif len(new_state_tensor.shape) == 2:
+                                                new_state_tensor = torch.zeros(new_vocab_size, new_state_tensor.shape[1])
+                                            
+                                            # Copy existing states
+                                            new_state_tensor[:old_vocab_size] = state_tensor[:old_vocab_size]
+                                            
+                                            # Update the state
+                                            param_state[state_key] = new_state_tensor
 
     @torch.inference_mode()
     def synthesise(self, x, x_lengths, n_timesteps, temperature=1.0, spks=None, length_scale=1.0):

@@ -3,10 +3,16 @@ from typing import Any, Dict, List, Optional, Tuple
 import hydra
 import lightning as L
 import rootutils
+import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
+torch.set_float32_matmul_precision('high') 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+warnings.filterwarnings("ignore", message=".*StreamingMediaDecoder.*")
+warnings.filterwarnings("ignore", message=".*load_with_torchcodec.*")
 from matcha import utils
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
