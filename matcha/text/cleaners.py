@@ -12,6 +12,7 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 """
 
 import logging
+import os
 import re
 
 import phonemizer
@@ -26,6 +27,23 @@ critical_logger.setLevel(logging.CRITICAL)
 # now the phonemizer is not initialising at every call
 # Might be less flexible, but it is much-much faster
 global_phonemizers = {}
+
+def get_or_create_phonemizer(language, cleaner_name):
+    """Get or create a phonemizer, handling multiprocessing gracefully"""
+    # Use process ID to create unique keys for each process
+    process_key = f"{cleaner_name}_{os.getpid()}"
+    
+    if process_key not in global_phonemizers:
+        global_phonemizers[process_key] = phonemizer.backend.EspeakBackend(
+            language=language,
+            preserve_punctuation=True,
+            with_stress=True,
+            language_switch="remove-flags",
+            logger=critical_logger,
+        )
+    return global_phonemizers[process_key]
+
+# Initialize the main phonemizer for backward compatibility
 global_phonemizers["english_cleaners2"] = phonemizer.backend.EspeakBackend(
     language="en-us",
     preserve_punctuation=True,
@@ -177,7 +195,11 @@ def english_cleaners2(text):
     text = convert_to_ascii(text)
     text = lowercase(text)
     text = expand_abbreviations(text)
-    phonemes = global_phonemizers["english_cleaners2"].phonemize([text], strip=True, njobs=1)[0]
+    
+    # Use the phonemizer backend
+    phonemizer_backend = get_or_create_phonemizer("en-us", "english_cleaners2")
+    phonemes = phonemizer_backend.phonemize([text], strip=True, njobs=1)[0]
+    
     # Added in some cases espeak is not removing brackets
     phonemes = remove_brackets(phonemes)
     phonemes = collapse_whitespace(phonemes)
@@ -192,15 +214,11 @@ def polish_cleaners(text):
     # Handle special vocal tokens BEFORE phonemization (convert to ASCII placeholders)
     text = handle_special_vocals(text)
     text = lowercase(text)
-    if not "polish_cleaners" in global_phonemizers:
-        global_phonemizers["polish_cleaners"] = phonemizer.backend.EspeakBackend(
-            language="pl",
-            preserve_punctuation=True,
-            with_stress=True,
-            language_switch="remove-flags",
-            logger=critical_logger,
-        )
-    phonemes = global_phonemizers["polish_cleaners"].phonemize([text], strip=True, njobs=1)[0]
+    
+    # Use the phonemizer backend
+    phonemizer_backend = get_or_create_phonemizer("pl", "polish_cleaners")
+    phonemes = phonemizer_backend.phonemize([text], strip=True, njobs=1)[0]
+    
     # symbols doesn't contain the combining tilde, so replace it with the closest unused character
     # (because the nasal component of Polish "nasal vowels" is 'w', but that's used)
     phonemes = phonemes.replace("\u0303", "ʷ")
@@ -216,15 +234,11 @@ def polish_cleaners(text):
 
 def hungarian_cleaners(text):
     text = lowercase(text)
-    if not "hungarian_cleaners" in global_phonemizers:
-        global_phonemizers["hungarian_cleaners"] = phonemizer.backend.EspeakBackend(
-            language="hu",
-            preserve_punctuation=True,
-            with_stress=True,
-            language_switch="remove-flags",
-            logger=critical_logger,
-        )
-    phonemes = global_phonemizers["hungarian_cleaners"].phonemize([text], strip=True, njobs=1)[0]
+    
+    # Use the phonemizer backend
+    phonemizer_backend = get_or_create_phonemizer("hu", "hungarian_cleaners")
+    phonemes = phonemizer_backend.phonemize([text], strip=True, njobs=1)[0]
+    
     # Added in some cases espeak is not removing brackets
     phonemes = remove_brackets(phonemes)
     phonemes = collapse_whitespace(phonemes)
